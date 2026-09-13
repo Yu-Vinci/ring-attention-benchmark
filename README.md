@@ -1,290 +1,114 @@
 # Ring Attention Multi-GPU Benchmark
 
-Ring Attention implementation with five communication backends and two overlap-enabled attention variants:
+Standalone C/CUDA benchmark package for ring communication and Ring Attention experiments, with a shared Makefile and OpenMPI/Slurm launch scripts.
 
-- `staged`
-- `staged_Isendrecv`
-- `staged_Isendrecv_overlap` (attention benchmark only)
-- `cuda_aware`
-- `cuda_aware_Isendrecv`
-- `cuda_aware_Isendrecv_overlap` (attention benchmark only)
-- `nccl`
+This repository focuses on running benchmark variants. The related [Multi-GPU-Flashattention](https://github.com/3429495086/Multi-GPU-Flashattention) repository contains workload modeling and scheduling research. This package does not include the newer local C++ revision or its results.
 
-The package now follows an external-launch model:
+## Benchmark variants
 
-- `make` reads `benchmark.env` directly
-- `run_suite.sh` only prepares the run directory and build artifacts
-- `benchmark_comm.sh` and `benchmark_attention.sh` launch the benchmark binaries directly with `mpirun` or `srun`
-- `launch_mpirun.example.sh` and `batch_slurm.example.sh` are ready-made outer launchers
+Three communication families are exposed through five communication variants and seven attention variants:
 
-## Benchmarks
+| Family | Communication variants | Additional attention variant |
+| --- | --- | --- |
+| Staged MPI | `staged`, `staged_Isendrecv` | `staged_Isendrecv_overlap` |
+| CUDA-aware MPI | `cuda_aware`, `cuda_aware_Isendrecv` | `cuda_aware_Isendrecv_overlap` |
+| NCCL | `nccl` | — |
 
-| Type | Description |
-|------|-------------|
-| `comm` | Communication-only benchmark |
-| `attention` | Full Ring Attention benchmark |
+[Communication-only sources](src/loop/) isolate ring data exchange. [Attention sources](src/attention/) combine local attention, exchange and output merging. These are experimental CUDA implementations, not a full-model training benchmark.
 
-## Dependencies
+## Requirements
 
-- CUDA Toolkit
-- MPI implementation with GPU support
-- NCCL for the NCCL backend
+- Linux, Bash 4+, Make and a host C/C++ compiler.
+- NVIDIA GPUs and a CUDA toolkit.
+- MPI; CUDA-aware support for the `cuda_aware` variants.
+- NCCL for the NCCL variant.
+- Python 3 for output comparisons.
 
-## Quick Start
+Use rank counts and GPU placement supported by your allocation. A configuration listing 2/4/8 ranks is a proposed sweep, not evidence that all those configurations were measured.
+
+## Quick start
 
 ```bash
+git clone https://github.com/3429495086/ring-attention-benchmark.git
+cd ring-attention-benchmark
 cp config.example.env benchmark.env
-make print-config
-./run_suite.sh
-```
-
-`./run_suite.sh` in this mode does not launch MPI jobs. It:
-
-1. creates `results/<hostname>_<timestamp>/`
-2. builds the binaries
-3. collects local environment info
-4. writes `launch_examples.txt` with the exact `mpirun` and `srun` commands
-
-Then launch the actual MPI jobs externally.
-
-## Build Configuration
-
-`make` automatically loads `benchmark.env` when it exists, so this works:
-
-```bash
-cp config.example.env benchmark.env
-# edit CUDA_HOME / MPI_HOME / NCCL_HOME if needed
-make print-config
-make all
-```
-
-If `MPI_HOME` or `NCCL_HOME` is set, the Makefile now prefers those explicit paths over incomplete wrapper autodetection. This is useful on clusters where plain `mpicxx --showme:*` does not return enough information.
-
-Example:
-
-```bash
-MPI_HOME=/opt/openmpi \
-NCCL_HOME=/opt/nccl \
+# Edit CUDA_HOME, MPI_HOME, NCCL_HOME and the benchmark matrix for your machine.
 make print-config
 ```
 
-Useful targets:
+From a normal shell inside your GPU allocation, prepare one named run:
 
 ```bash
-make all
-make comm
-make attention
-make print-config
-make clean
-```
-
-## Recommended Test Matrix
-
-The default `config.example.env` is a good starting point:
-
-```bash
-NP_LIST="2 4 8"
-COMM_SIZES="262144 524288 1048576 4194304 16777216"
-ATTENTION_SIZES="262144 524288 1048576"
-BACKENDS="staged staged_Isendrecv cuda_aware cuda_aware_Isendrecv nccl"
-ATTENTION_BACKENDS="staged staged_Isendrecv staged_Isendrecv_overlap cuda_aware cuda_aware_Isendrecv cuda_aware_Isendrecv_overlap nccl"
-WARMUP=10
-ITERS=100
-RUN_TYPES="comm attention"
-```
-
-This covers:
-
-- different rank/GPU counts
-- small and large message sizes
-- staged MPI vs CUDA-aware MPI vs NCCL
-- pure communication vs full attention
-- overlap-enabled attention variants without changing the comm-only suite
-
-## External Launch Model
-
-### Preparation Step
-
-Run once from the repository root:
-
-```bash
+export RUN_LABEL="manual_$(date +%Y%m%d_%H%M%S)"
+export RESULTS_ROOT="$PWD/results"
 ./run_suite.sh
 ```
 
-This writes:
+`run_suite.sh` builds the selected targets, collects environment information and writes launch examples. It does not launch MPI jobs. Keeping the run label fixed before preparation ensures that subsequent logs use the directory that was created.
 
-- `manifest.txt`
-- `build.log`
-- `env_local.txt`
-- `run_context.env`
-- `launch_examples.txt`
-
-### Launch Step
-
-`run_suite.sh` is preparation-only. The actual launch step should call
-`benchmark_comm.sh` or `benchmark_attention.sh` from a normal shell. Those
-wrappers call `mpirun` or `srun` directly on the benchmark binaries.
-
-## Ready-Made Launcher Examples
-
-### OpenMPI
-
-Use the external helper:
-
-```bash
-bash launch_mpirun.example.sh
-```
-
-It will:
-
-1. call `./run_suite.sh` once for preparation
-2. loop over `NP_LIST`
-3. call `benchmark_comm.sh` / `benchmark_attention.sh`
-4. let those wrappers directly launch the benchmark binaries with `mpirun`
-5. write logs into the prepared results directory
-
-### Slurm
-
-Use:
-
-```bash
-sbatch batch_slurm.example.sh
-```
-
-The batch script now does the launching itself:
-
-1. prepare with `./run_suite.sh`
-2. loop over `NP_LIST`
-3. call `benchmark_comm.sh` / `benchmark_attention.sh`
-4. let those wrappers directly launch the benchmark binaries with `srun`
-
-This matches the cluster requirement that the launcher is outside the benchmark scripts.
-
-## Manual Examples
-
-### OpenMPI
-
-```bash
-./run_suite.sh
-RUN_LABEL="$(hostname)_20260421_test"
-RESULTS_ROOT="$PWD/results"
-
-env CONFIG=benchmark.env NP=2 RUN_LABEL="$RUN_LABEL" RESULTS_ROOT="$RESULTS_ROOT" \
-  LAUNCHER=mpirun ./benchmark_comm.sh > "$RESULTS_ROOT/$RUN_LABEL/comm_np2.log" 2>&1
-
-env CONFIG=benchmark.env NP=2 RUN_LABEL="$RUN_LABEL" RESULTS_ROOT="$RESULTS_ROOT" \
-  LAUNCHER=mpirun ./benchmark_attention.sh > "$RESULTS_ROOT/$RUN_LABEL/attention_np2.log" 2>&1
-```
-
-### Slurm
-
-```bash
-./run_suite.sh
-env CONFIG=benchmark.env NP=2 RUN_LABEL="$RUN_LABEL" RESULTS_ROOT="$RESULTS_ROOT" \
-  LAUNCHER=srun SRUN_MPI_TYPE=openmpi SRUN_EXTRA_ARGS="--ntasks-per-node=1" \
-  ./benchmark_comm.sh > "$RESULTS_ROOT/$RUN_LABEL/comm_np2.log" 2>&1
-```
-
-### Direct wrapper launch
-
-You can also launch the benchmark family wrappers directly:
-
-```bash
-env NP=2 LAUNCHER=mpirun ./benchmark_comm.sh
-env NP=2 LAUNCHER=mpirun ./benchmark_attention.sh
-```
-
-## Attention Correctness Check
-
-Use this before collecting performance results on a new machine:
+Run an attention comparison before collecting timings:
 
 ```bash
 env NP=2 SIZE=262144 WARMUP=1 ITERS=1 LAUNCHER=mpirun \
   ./check_attention_correctness.sh
 ```
 
-The script compares:
-
-- `staged_Isendrecv` vs `staged_Isendrecv_overlap`
-- `cuda_aware_Isendrecv` vs `cuda_aware_Isendrecv_overlap`
-
-It temporarily enables `ATTENTION_DUMP_OUTPUT=1`, runs the baseline and overlap
-versions, saves `ring_output_rank*.bin` under `results/<run_label>/`, and prints
-`PASS` or `FAIL` with `max_abs_err`, `mean_abs_err`, and `max_rel_err`.
-
-You can also run it through Make:
+Then launch the benchmark wrappers from the same shell:
 
 ```bash
+env NP=2 LAUNCHER=mpirun ./benchmark_comm.sh \
+  > "$RESULTS_ROOT/$RUN_LABEL/comm_np2.log" 2>&1
+env NP=2 LAUNCHER=mpirun ./benchmark_attention.sh \
+  > "$RESULTS_ROOT/$RUN_LABEL/attention_np2.log" 2>&1
+```
+
+The wrappers call `mpirun` or `srun` themselves. Do not wrap these shell scripts in another MPI launcher. To set sizes directly, use `SIZES`, for example `SIZES="262144 524288"`; check the printed sizes and backend list before collecting results.
+
+## Cluster launch options
+
+- [launch_mpirun.example.sh](launch_mpirun.example.sh) provides an OpenMPI sweep. Export a fixed `RUN_LABEL` and `RESULTS_ROOT` before invoking it so preparation and log paths agree.
+- [batch_slurm.example.sh](batch_slurm.example.sh) provides a Slurm submission example. Adapt resource requests and installation paths to your cluster before submitting.
+- Inside an existing Slurm GPU allocation, use `LAUNCHER=srun` with the wrappers. Set `SRUN_MPI_TYPE` only to a plugin supported by that cluster.
+
+For manual launches, the preparation step writes exact command examples to `results/<run_label>/launch_examples.txt`.
+
+## Configuration and build
+
+[config.example.env](config.example.env) documents the machine paths and sweep settings. The Makefile reads `benchmark.env` by default.
+
+| Setting | Purpose |
+| --- | --- |
+| `CONFIG` | Configuration file; default `benchmark.env` |
+| `NP` / `NP_LIST` | One wrapper launch / outer sweep rank counts |
+| `BACKENDS` / `ATTENTION_BACKENDS` | Communication / attention variants |
+| `SIZES` | Sizes passed directly to a benchmark wrapper |
+| `COMM_SIZES` / `ATTENTION_SIZES` | Preparation and sweep configuration; verify the wrappers print the intended sizes |
+| `WARMUP` / `ITERS` | Warmup / timed iterations |
+| `MPIRUN`, `HOSTFILE`, `MPIRUN_EXTRA_ARGS` | OpenMPI launch settings |
+| `SRUN`, `SRUN_MPI_TYPE`, `SRUN_EXTRA_ARGS` | Slurm launch settings |
+| `RUN_LABEL` / `RESULTS_ROOT` | Run identity and output location |
+
+Useful build targets:
+
+```bash
+make print-config
+make all
+make comm
+make attention
 make check-attention-correctness
+make clean
 ```
 
-## Main Variables
+## What the comparison checks
 
-### Preparation
+[check_attention_correctness.sh](check_attention_correctness.sh) compares `staged_Isendrecv` with its overlap variant and `cuda_aware_Isendrecv` with its overlap variant. It saves per-rank output dumps and reports absolute and relative differences.
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `CONFIG` | `benchmark.env` | Config file to source |
-| `RUN_LABEL` | `<hostname>_<timestamp>` | Result directory name |
-| `RESULTS_ROOT` | `results/` | Root directory for outputs |
-| `BUILD` | `1` | Build binaries during preparation |
-| `COLLECT_ENV` | `1` | Save `collect_env.sh` output |
+This is a pairwise regression check, not an independent full-attention reference check. Agreement between two implementations does not prove that both are correct. The related research repository has a separate CPU-reference workflow.
 
-### Benchmark Matrix
+## Results and reporting
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `NP_LIST` | `2` | Rank counts to sweep from the outer launcher |
-| `RUN_TYPES` | `comm attention` | Benchmark families |
-| `BACKENDS` | five comm backends | Communication backends for `benchmark_comm.sh` |
-| `ATTENTION_BACKENDS` | seven attention backends | Attention backends for `benchmark_attention.sh` |
-| `COMM_SIZES` | see config | Sizes for communication benchmark |
-| `ATTENTION_SIZES` | see config | Sizes for attention benchmark |
-| `WARMUP` | `10` | Warmup iterations |
-| `ITERS` | `100` | Timed iterations |
+Preparation writes `manifest.txt`, `build.log`, `env_local.txt`, `run_context.env` and `launch_examples.txt`. The launch commands save `comm_np<N>.log` and `attention_np<N>.log`.
 
-### External Launcher Hints
+When reporting performance, record the source revision, hardware/topology, problem shape, precision, backend, warmup and iteration counts. Keep communication-only timings separate from end-to-end attention timings. No new performance results are claimed by this documentation update.
 
-These variables are used by the wrapper scripts that launch the binaries directly.
-
-| Variable | Meaning |
-|----------|---------|
-| `MPIRUN` | Path to `mpirun` |
-| `HOSTFILE` | OpenMPI hostfile |
-| `MPIRUN_EXTRA_ARGS` | Extra `mpirun` flags |
-| `SRUN` | Path to `srun` |
-| `SRUN_MPI_TYPE` | Slurm MPI plugin, for example `openmpi` |
-| `SRUN_EXTRA_ARGS` | Extra `srun` flags |
-
-## Output
-
-The main result directory contains:
-
-- `manifest.txt`
-- `build.log`
-- `env_local.txt`
-- `run_context.env`
-- `launch_examples.txt`
-- `comm_np<N>.log`
-- `attention_np<N>.log`
-
-Example communication output:
-
-```text
-RESULT backend=staged bytes=262144 ranks=2 warmup=10 iters=100 avg_d2h_ms=0.027 avg_mpi_ms=0.080 avg_h2d_ms=0.028 avg_total_ms=0.135 total_GBps=1.94 mpi_GBps=3.28
-```
-
-Example attention output:
-
-```text
-staged bench: warmup=10 iters=100
-avg_total=24.677 ms avg_D2H=0.027 avg_MPI=0.080 avg_H2D=0.028 avg_attn=24.218 avg_merge=0.079 avg_final=0.269
-```
-
-## Notes
-
-- GPU selection inside the CUDA code is based on local rank, not global rank.
-- `benchmark_comm.sh` and `benchmark_attention.sh` print headers only from rank 0 to keep logs readable.
-- If `NP` differs from the detected MPI world size, the detected world size wins.
-
-Yu Gang - Ring Attention Multi-GPU Parallelization Research
+Yu Gang (Yuvinci)
