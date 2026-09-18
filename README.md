@@ -2,7 +2,7 @@
 
 Standalone C/CUDA benchmark package for ring communication and Ring Attention experiments, with a shared Makefile and OpenMPI/Slurm launch scripts.
 
-This repository focuses on running benchmark variants. The related [Multi-GPU-Flashattention](https://github.com/3429495086/Multi-GPU-Flashattention) repository contains workload modeling and scheduling research. This package does not include the newer local C++ revision or its results.
+This repository focuses on running benchmark variants. The related [Multi-GPU-Flashattention](https://github.com/Yu-Vinci/Multi-GPU-Flashattention) repository contains workload modeling and scheduling research. This package does not include the newer local C++ revision or its results.
 
 ## Benchmark variants
 
@@ -29,7 +29,7 @@ Use rank counts and GPU placement supported by your allocation. A configuration 
 ## Quick start
 
 ```bash
-git clone https://github.com/3429495086/ring-attention-benchmark.git
+git clone https://github.com/Yu-Vinci/ring-attention-benchmark.git
 cd ring-attention-benchmark
 cp config.example.env benchmark.env
 # Edit CUDA_HOME, MPI_HOME, NCCL_HOME and the benchmark matrix for your machine.
@@ -111,4 +111,4 @@ Preparation writes `manifest.txt`, `build.log`, `env_local.txt`, `run_context.en
 
 When reporting performance, record the source revision, hardware/topology, problem shape, precision, backend, warmup and iteration counts. Keep communication-only timings separate from end-to-end attention timings. No new performance results are claimed by this documentation update.
 
-Yu Gang (Yuvinci)
+Gang Yu (@Yu-Vinci)
